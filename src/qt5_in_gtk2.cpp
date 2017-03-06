@@ -1,5 +1,6 @@
 /*
-  Copyright 2011-2017 David Robillard <http://drobilla.net>
+  Copyright 2011-2015 David Robillard <http://drobilla.net>
+  Copyright 2016 Stefan Westerfeld <stefan@space.twc.de>
 
   Permission to use, copy, modify, and/or distribute this software for any
   purpose with or without fee is hereby granted, provided that the above
@@ -17,89 +18,40 @@
 #include <gtk/gtk.h>
 
 #include <QApplication>
-#include <QMouseEvent>
 #include <QVBoxLayout>
 #include <QWidget>
 #include <QWindow>
-#include <QX11Info>
-#include <X11/Xlib.h>
 
 #include "./suil_internal.h"
 
 extern "C" {
 
-#define SUIL_TYPE_QT_WRAPPER (suil_qt_wrapper_get_type())
-#define SUIL_QT_WRAPPER(obj) (G_TYPE_CHECK_INSTANCE_CAST((obj), SUIL_TYPE_QT_WRAPPER, SuilQtWrapper))
+#define SUIL_TYPE_QT5_WRAPPER (suil_qt5_wrapper_get_type())
+#define SUIL_QT5_WRAPPER(obj) (G_TYPE_CHECK_INSTANCE_CAST((obj), SUIL_TYPE_QT5_WRAPPER, SuilQt5Wrapper))
 
-typedef struct _SuilQtWrapper      SuilQtWrapper;
-typedef struct _SuilQtWrapperClass SuilQtWrapperClass;
+typedef struct _SuilQt5Wrapper      SuilQt5Wrapper;
+typedef struct _SuilQt5WrapperClass SuilQt5WrapperClass;
 
-class EmbedWidget : public QWidget
-{
-public:
-	EmbedWidget()
-		: QWidget()
-		, display(QX11Info::display())
-		, wid(winId())
-	{}
-
-	WId id() const { return wid; }
-
-protected:
-	bool eventFilter(QObject*, QEvent* ev) {
-		if (wid == 0 || !display) {
-			return false;
-		}
-
-		if (ev->type() == QEvent::Enter ||
-		    ev->type() == QEvent::WindowActivate) {
-			const Window root = XRootWindow(display, 0);
-			int x, y;
-			Window child;
-			XTranslateCoordinates(display, wid, root, 0, 0, &x, &y, &child);
-
-			XWindowAttributes attrs;
-			XGetWindowAttributes(display, wid, &attrs);
-
-			const QPoint p = QPoint(x - attrs.x, y - attrs.y);
-			if (p != pos) {
-				pos = p;
-				move(pos);
-				XMoveWindow(display, wid, 0, 0);
-			}
-		}
-
-		return false;
-	}
-
-private:
-	Display* display;
-	QPoint   pos;
-	WId      wid;
+struct _SuilQt5Wrapper {
+	GtkSocket        socket;
+	QApplication*    app;
+        QWidget*         qembed;
+	SuilWrapper*     wrapper;
+	SuilInstance*    instance;
 };
 
-struct _SuilQtWrapper
-{
-	GtkSocket     socket;
-	QApplication* app;
-	EmbedWidget*  qembed;
-	SuilWrapper*  wrapper;
-	SuilInstance* instance;
-};
-
-struct _SuilQtWrapperClass
-{
+struct _SuilQt5WrapperClass {
 	GtkSocketClass parent_class;
 };
 
-GType suil_qt_wrapper_get_type(void); // Accessor for SUIL_TYPE_QT_WRAPPER
+GType suil_qt5_wrapper_get_type(void);  // Accessor for SUIL_TYPE_QT_WRAPPER
 
-G_DEFINE_TYPE(SuilQtWrapper, suil_qt_wrapper, GTK_TYPE_SOCKET)
+G_DEFINE_TYPE(SuilQt5Wrapper, suil_qt5_wrapper, GTK_TYPE_SOCKET)
 
 static void
-suil_qt_wrapper_finalize(GObject* gobject)
+suil_qt5_wrapper_finalize(GObject* gobject)
 {
-	SuilQtWrapper* const self = SUIL_QT_WRAPPER(gobject);
+	SuilQt5Wrapper* const self = SUIL_QT5_WRAPPER(gobject);
 
 	if (self->instance->handle) {
 		self->instance->descriptor->cleanup(self->instance->handle);
@@ -107,24 +59,25 @@ suil_qt_wrapper_finalize(GObject* gobject)
 	}
 
 	delete self->qembed;
+	self->qembed = NULL;
 
-	self->qembed        = NULL;
-	self->app           = NULL;
+	self->app = NULL;
+
 	self->wrapper->impl = NULL;
 
-	G_OBJECT_CLASS(suil_qt_wrapper_parent_class)->finalize(gobject);
+	G_OBJECT_CLASS(suil_qt5_wrapper_parent_class)->finalize(gobject);
 }
 
 static void
-suil_qt_wrapper_class_init(SuilQtWrapperClass* klass)
+suil_qt5_wrapper_class_init(SuilQt5WrapperClass* klass)
 {
 	GObjectClass* const gobject_class = G_OBJECT_CLASS(klass);
 
-	gobject_class->finalize = suil_qt_wrapper_finalize;
+	gobject_class->finalize = suil_qt5_wrapper_finalize;
 }
 
 static void
-suil_qt_wrapper_init(SuilQtWrapper* self)
+suil_qt5_wrapper_init(SuilQt5Wrapper* self)
 {
 	self->app      = NULL;
 	self->qembed   = NULL;
@@ -132,35 +85,36 @@ suil_qt_wrapper_init(SuilQtWrapper* self)
 }
 
 static void
-suil_qt_wrapper_realize(GtkWidget* w, gpointer data)
+suil_qt5_wrapper_realize(GtkWidget* w, gpointer data)
 {
-	SuilQtWrapper* const wrap = SUIL_QT_WRAPPER(w);
-	GtkSocket* const     s    = GTK_SOCKET(w);
+	SuilQt5Wrapper* const wrap = SUIL_QT5_WRAPPER(w);
+	GtkSocket* const      s    = GTK_SOCKET(w);
 
-	gtk_socket_add_id(s, wrap->qembed->id());
+	wrap->qembed->winId();
+	wrap->qembed->windowHandle()->setParent (QWindow::fromWinId (gtk_socket_get_id (s)));
 	wrap->qembed->show();
 }
 
 static int
-wrapper_wrap(SuilWrapper* wrapper, SuilInstance* instance)
+wrapper_wrap(SuilWrapper*  wrapper,
+             SuilInstance* instance)
 {
-	SuilQtWrapper* const wrap = SUIL_QT_WRAPPER(wrapper->impl);
+	SuilQt5Wrapper* const wrap = SUIL_QT5_WRAPPER(wrapper->impl);
 
-	wrap->qembed   = new EmbedWidget();
+	wrap->qembed   = new QWidget();
 	wrap->wrapper  = wrapper;
 	wrap->instance = instance;
-
-	wrap->qembed->setAttribute(Qt::WA_LayoutUsesWidgetRect);
 
 	QWidget*     qwidget = (QWidget*)instance->ui_widget;
 	QVBoxLayout* layout  = new QVBoxLayout(wrap->qembed);
 	layout->addWidget(qwidget);
 
-	qwidget->installEventFilter(wrap->qembed);
 	qwidget->setParent(wrap->qembed);
 
-	g_signal_connect_after(G_OBJECT(wrap), "realize",
-	                       G_CALLBACK(suil_qt_wrapper_realize), NULL);
+	g_signal_connect_after(G_OBJECT(wrap),
+	                       "realize",
+	                       G_CALLBACK(suil_qt5_wrapper_realize),
+	                       NULL);
 
 	instance->host_widget = GTK_WIDGET(wrap);
 
@@ -171,7 +125,7 @@ static void
 wrapper_free(SuilWrapper* wrapper)
 {
 	if (wrapper->impl) {
-		SuilQtWrapper* const wrap = SUIL_QT_WRAPPER(wrapper->impl);
+		SuilQt5Wrapper* const wrap = SUIL_QT5_WRAPPER(wrapper->impl);
 		gtk_object_destroy(GTK_OBJECT(wrap));
 	}
 }
@@ -188,8 +142,8 @@ suil_wrapper_new(SuilHost*      host,
 	wrapper->wrap = wrapper_wrap;
 	wrapper->free = wrapper_free;
 
-	SuilQtWrapper* const wrap = SUIL_QT_WRAPPER(
-		g_object_new(SUIL_TYPE_QT_WRAPPER, NULL));
+	SuilQt5Wrapper* const wrap = SUIL_QT5_WRAPPER(
+		g_object_new(SUIL_TYPE_QT5_WRAPPER, NULL));
 
 	if (qApp) {
 		wrap->app = qApp;
@@ -199,9 +153,10 @@ suil_wrapper_new(SuilHost*      host,
 	}
 
 	wrap->wrapper = NULL;
+
 	wrapper->impl = wrap;
 
 	return wrapper;
 }
 
-} // extern "C"
+}  // extern "C"
