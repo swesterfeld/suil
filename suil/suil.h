@@ -125,6 +125,16 @@ typedef void (*SuilTouchFunc)(
 	bool           grabbed);
 
 /**
+   Initialize the SUIL library.
+
+   This function should be called as early as possible. Especially on X11 based
+   systems, this must be be called before any other Xlib call is made.
+*/
+SUIL_API
+void
+suil_init();
+
+/**
    Create a new UI host descriptor.
    @param write_func Function to send a value to a plugin port.
    @param index_func Function to get the index for a port by symbol.
