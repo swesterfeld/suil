@@ -1,5 +1,6 @@
 /*
-  Copyright 2011-2017 David Robillard <http://drobilla.net>
+  Copyright 2011-2015 David Robillard <http://drobilla.net>
+  Copyright 2016 Stefan Westerfeld <stefan@space.twc.de>
 
   Permission to use, copy, modify, and/or distribute this software for any
   purpose with or without fee is hereby granted, provided that the above
@@ -17,12 +18,9 @@
 #include <gtk/gtk.h>
 
 #include <QApplication>
-#include <QMouseEvent>
 #include <QVBoxLayout>
 #include <QWidget>
 #include <QWindow>
-#include <QX11Info>
-#include <X11/Xlib.h>
 
 #include "./suil_internal.h"
 
@@ -34,55 +32,11 @@ extern "C" {
 typedef struct _SuilQtWrapper      SuilQtWrapper;
 typedef struct _SuilQtWrapperClass SuilQtWrapperClass;
 
-class EmbedWidget : public QWidget
-{
-public:
-	EmbedWidget()
-		: QWidget()
-		, display(QX11Info::display())
-		, wid(winId())
-	{}
-
-	WId id() const { return wid; }
-
-protected:
-	bool eventFilter(QObject*, QEvent* ev) {
-		if (wid == 0 || !display) {
-			return false;
-		}
-
-		if (ev->type() == QEvent::Enter ||
-		    ev->type() == QEvent::WindowActivate) {
-			const Window root = XRootWindow(display, 0);
-			int x, y;
-			Window child;
-			XTranslateCoordinates(display, wid, root, 0, 0, &x, &y, &child);
-
-			XWindowAttributes attrs;
-			XGetWindowAttributes(display, wid, &attrs);
-
-			const QPoint p = QPoint(x - attrs.x, y - attrs.y);
-			if (p != pos) {
-				pos = p;
-				move(pos);
-				XMoveWindow(display, wid, 0, 0);
-			}
-		}
-
-		return false;
-	}
-
-private:
-	Display* display;
-	QPoint   pos;
-	WId      wid;
-};
-
 struct _SuilQtWrapper
 {
 	GtkSocket     socket;
 	QApplication* app;
-	EmbedWidget*  qembed;
+        QWidget*      qembed;
 	SuilWrapper*  wrapper;
 	SuilInstance* instance;
 };
@@ -137,7 +91,8 @@ suil_qt_wrapper_realize(GtkWidget* w, gpointer data)
 	SuilQtWrapper* const wrap = SUIL_QT_WRAPPER(w);
 	GtkSocket* const     s    = GTK_SOCKET(w);
 
-	gtk_socket_add_id(s, wrap->qembed->id());
+	wrap->qembed->winId();
+	wrap->qembed->windowHandle()->setParent (QWindow::fromWinId (gtk_socket_get_id (s)));
 	wrap->qembed->show();
 }
 
@@ -146,17 +101,14 @@ wrapper_wrap(SuilWrapper* wrapper, SuilInstance* instance)
 {
 	SuilQtWrapper* const wrap = SUIL_QT_WRAPPER(wrapper->impl);
 
-	wrap->qembed   = new EmbedWidget();
+	wrap->qembed   = new QWidget();
 	wrap->wrapper  = wrapper;
 	wrap->instance = instance;
-
-	wrap->qembed->setAttribute(Qt::WA_LayoutUsesWidgetRect);
 
 	QWidget*     qwidget = (QWidget*)instance->ui_widget;
 	QVBoxLayout* layout  = new QVBoxLayout(wrap->qembed);
 	layout->addWidget(qwidget);
 
-	qwidget->installEventFilter(wrap->qembed);
 	qwidget->setParent(wrap->qembed);
 
 	g_signal_connect_after(G_OBJECT(wrap), "realize",
