@@ -20,6 +20,7 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -115,6 +116,49 @@ suil_dlfunc(void* handle, const char* symbol)
 	return dlfunc(handle, symbol);
 #endif
 }
+
+/**
+   Load module and lookup function via suil_dlfunc
+
+   On success: returns function pointer and library handle in lib, NULL otherwise
+*/
+
+static inline void*
+suil_module_open (const char *module_name, const char *func_name, void **lib)
+{
+	const char* const env_dir = getenv("SUIL_MODULE_DIR");
+	const char* const mod_dir = env_dir ? env_dir : SUIL_MODULE_DIR;
+
+	const size_t path_len = strlen(mod_dir)
+		+ strlen(SUIL_DIR_SEP SUIL_MODULE_PREFIX SUIL_MODULE_EXT)
+		+ strlen(module_name)
+		+ 2;
+	char* const path = (char*)calloc(path_len, 1);
+	snprintf(path, path_len, "%s%s%s%s%s",
+	         mod_dir, SUIL_DIR_SEP,
+	         SUIL_MODULE_PREFIX, module_name, SUIL_MODULE_EXT);
+	// Open wrap module
+	dlerror();
+	*lib = dlopen(path, RTLD_NOW);
+	if (!*lib) {
+		SUIL_ERRORF("Unable to open module %s (%s)\n", path, dlerror());
+		free(path);
+		return NULL;
+	}
+	void* func = (void*)suil_dlfunc(*lib, func_name);
+	if (func) {
+		free(path);
+		return func;
+	}
+	else {
+		SUIL_ERRORF("Corrupt module %s (missing function %s)\n", path, func_name);
+		dlclose(*lib);
+		*lib = NULL;
+		free(path);
+		return NULL;
+	}
+}
+
 
 /** Add a feature to a (mutable) LV2 feature array. */
 static inline void

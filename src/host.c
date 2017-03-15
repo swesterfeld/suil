@@ -52,46 +52,15 @@ suil_host_free(SuilHost* host)
 	}
 }
 
-
 static void
 suil_init_module (const char *module_name, const char *func_name)
 {
-	const char* const env_dir = getenv("SUIL_MODULE_DIR");
-	const char* const mod_dir = env_dir ? env_dir : SUIL_MODULE_DIR;
+	void *lib;
 
-	const size_t path_len = strlen(mod_dir)
-		+ strlen(SUIL_DIR_SEP SUIL_MODULE_PREFIX SUIL_MODULE_EXT)
-		+ strlen(module_name)
-		+ 2;
-
-	char* const path = (char*)calloc(path_len, 1);
-	snprintf(path, path_len, "%s%s%s%s%s",
-	         mod_dir, SUIL_DIR_SEP,
-	         SUIL_MODULE_PREFIX, module_name, SUIL_MODULE_EXT);
-
-	// Open wrap module
-	dlerror();
-	void* lib = dlopen(path, RTLD_NOW);
-	if (!lib) {
-		SUIL_ERRORF("Unable to open wrap module %s (%s)\n", path, dlerror());
-		free(path);
-		return NULL;
-	}
-
-	SuilVoidFunc suil_init_func = (SuilVoidFunc)suil_dlfunc (lib, func_name);
-	if (suil_init_func)
-	{
+	SuilVoidFunc suil_init_func = (SuilVoidFunc)suil_module_open (module_name, func_name, &lib);
+	if (suil_init_func) {
 		(*suil_init_func)();
 	}
-	else
-	{
-		SUIL_ERRORF("Corrupt module %s\n", path);
-		dlclose(lib);
-		free(path);
-		return NULL;
-	}
-
-	free(path);
 
 }
 
